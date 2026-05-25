@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+
+# large data — stay on scratch/NFS
+logs/
+results/
+checkpoints/
+
+# audio scratch files
+*.wav
+*.flac
+*.mp3
+
+# notebook checkpoints
+.ipynb_checkpoints/

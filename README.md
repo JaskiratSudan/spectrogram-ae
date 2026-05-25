@@ -25,7 +25,12 @@ Before encoding, a binary mask is applied to focus the model on the most informa
 
 ## Models
 
-Two encoder backbones were compared — a lightweight **CNN** autoencoder and a **ViT-Tiny** encoder paired with a shallow transformer decoder.
+Two encoder backbones were compared, both trained from scratch with a 256-dim bottleneck latent.
+
+| Model | Params | Architecture |
+|---|---|---|
+| CNN Autoencoder | ~21M | 4-stage convolutional encoder (1→32→64→128→256, MaxPool2d) with mirrored transposed-conv decoder |
+| ViT-Tiny + Transformer Decoder | ~8M | ViT-Tiny patch encoder (192-dim, 16×16 patches) projected to 256-dim latent; 4-layer transformer decoder reconstructs patch tokens |
 
 ---
 

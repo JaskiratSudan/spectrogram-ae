@@ -5,7 +5,7 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=50:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=logs/slurm-%j.log
 #SBATCH --mail-user=jsudan@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -29,18 +29,18 @@ echo "----------------------------------------------------------------"
 #----------------------------------------------------------------#
 ENCODER=cnn     # cnn | vit_tiny
 MASK_TYPE=contour    # contour | energy
+CONTOUR_THRESHOLD=50   # keep edges where norm magnitude > threshold/100
+ENERGY_THRESHOLD=0     # keep cells within this many dB of the global max
 # Set to 1 to include ASV5/MLAAD bonafide samples in training
-USE_ASV5_TRAIN=1
+USE_ASV5_TRAIN=0
 USE_MLAAD_TRAIN=0
-EXP_NAME=spec_ae_${ENCODER}_${MASK_TYPE}_asv5_${USE_ASV5_TRAIN}_mlaad_${USE_MLAAD_TRAIN}
+EXP_NAME=spec_ae_${ENCODER}_${MASK_TYPE}_conth_${CONTOUR_THRESHOLD}_enth_${ENERGY_THRESHOLD}_asv5_${USE_ASV5_TRAIN}_mlaad_${USE_MLAAD_TRAIN}
 EPOCHS=500
 PATIENCE=10
 RAWBOOST_PROB=0.7
 BATCH_SIZE=64
 NUM_WORKERS=8
 LATENT_DIM=256
-CONTOUR_THRESHOLD=30   # keep edges where norm magnitude > threshold/100
-ENERGY_THRESHOLD=0     # keep cells within this many dB of the global max
 
 CKPT_DIR=/scratch/hafiz_root/hafiz1/jsudan/spectrogram_ae/checkpoints/${EXP_NAME}
 RESULTS_DIR=/home/jsudan/spectrogram_ae/results/${EXP_NAME}

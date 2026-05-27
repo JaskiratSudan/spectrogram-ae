@@ -7,10 +7,10 @@ from dataclasses import asdict, fields
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from config import Config
-from dataset import ASVspoof2019Dataset, ASVspoof5Dataset, MLAADDataset, collate_fn
+from dataset import ASVspoof2019Dataset, ASVspoof5Dataset, ATADDDataset, MLAADDataset, collate_fn
 from features import compute_mel, compute_mask
 from models import build_model
 from utils import set_seed
@@ -43,9 +43,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train spectrogram autoencoder")
     parser.add_argument("--train_protocol", required=True)
     parser.add_argument("--train_root", required=True)
-    parser.add_argument("--dev_protocol", required=True)
-    parser.add_argument("--dev_root", required=True)
+    parser.add_argument("--dev_protocol", default=None)
+    parser.add_argument("--dev_root", default=None)
     parser.add_argument("--encoder", default="cnn", choices=["cnn", "vit_tiny"])
+    parser.add_argument("--train_dataset", default="asv19", choices=["asv19", "atadd"],
+                        help="Dataset class to use for the primary train split")
+    parser.add_argument("--dev_dataset", default="asv19", choices=["asv19", "atadd"],
+                        help="Dataset class for dev when not using --val_frac")
+    parser.add_argument("--val_frac", type=float, default=0.0,
+                        help="If >0, split this fraction of bonafide train samples as val "
+                             "instead of loading a separate dev set")
     # Optional extra training datasets (bonafide only)
     parser.add_argument("--asv5_train_root", default=None)
     parser.add_argument("--asv5_train_protocol", default=None)
@@ -132,11 +139,37 @@ def main():
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     os.makedirs(cfg.save_dir, exist_ok=True)
 
+    print("=" * 60)
+    print("CONFIG")
+    print("=" * 60)
+    for f in fields(cfg):
+        print(f"  {f.name}: {getattr(cfg, f.name)}")
+    print(f"  device (resolved): {device}")
+    print("=" * 60, flush=True)
+
     kw = dict(target_sample_rate=cfg.sample_rate, max_duration_seconds=cfg.max_duration_seconds)
 
-    train_datasets = [
-        ASVspoof2019Dataset(args.train_root, args.train_protocol, subset="bonafide", **kw)
-    ]
+    _DATASET_CLS = {"asv19": ASVspoof2019Dataset, "atadd": ATADDDataset}
+    PrimaryTrainCls = _DATASET_CLS[args.train_dataset]
+    DevCls = _DATASET_CLS[args.dev_dataset]
+
+    primary_ds = PrimaryTrainCls(args.train_root, args.train_protocol, subset="bonafide", **kw)
+
+    if args.val_frac > 0:
+        n = len(primary_ds)
+        indices = np.random.RandomState(42).permutation(n).tolist()
+        n_val = int(n * args.val_frac)
+        train_primary = Subset(primary_ds, indices[n_val:])
+        dev_ds = Subset(primary_ds, indices[:n_val])
+        print(f"Train/val split (val_frac={args.val_frac}): "
+              f"{len(train_primary)} train, {n_val} val from {len(primary_ds)} bonafide samples")
+    else:
+        if not args.dev_root or not args.dev_protocol:
+            raise ValueError("--dev_root and --dev_protocol are required when --val_frac is not set")
+        train_primary = primary_ds
+        dev_ds = DevCls(args.dev_root, args.dev_protocol, subset="bonafide", **kw)
+
+    train_datasets = [train_primary]
     if args.asv5_train_root and args.asv5_train_protocol:
         train_datasets.append(
             ASVspoof5Dataset(args.asv5_train_root, args.asv5_train_protocol, subset="bonafide", **kw)
@@ -149,10 +182,6 @@ def main():
     train_ds = ConcatDataset(train_datasets) if len(train_datasets) > 1 else train_datasets[0]
     total_train = sum(len(d) for d in train_datasets)
     print(f"Total training samples: {total_train} from {len(train_datasets)} dataset(s)")
-
-    dev_ds = ASVspoof2019Dataset(
-        args.dev_root, args.dev_protocol, subset="bonafide", **kw
-    )
 
     train_loader = DataLoader(
         train_ds,

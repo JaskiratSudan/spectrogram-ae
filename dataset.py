@@ -329,6 +329,50 @@ class FamousFiguresDataset(Dataset):
         return waveform, label, audio_name
 
 
+class ATADDDataset(Dataset):
+    """AT-ADD Track 1 dataset.
+
+    Protocol: CSV with header  name,label,generator
+    Labels: "real" -> 1 (bonafide), "fake" -> 0 (spoof)
+    Audio files sit directly in root_dir.
+    """
+
+    def __init__(
+        self,
+        root_dir: str,
+        protocol_path: str,
+        subset: str = "all",
+        target_sample_rate: int = 16000,
+        max_duration_seconds: int = 5,
+    ):
+        self.root_dir = Path(root_dir)
+        self.target_sample_rate = target_sample_rate
+        self.max_duration_seconds = max_duration_seconds
+        self.samples = []
+
+        with open(protocol_path, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                filename = row["name"].strip()
+                label = 1 if row["label"].strip() == "real" else 0
+                if subset == "bonafide" and label != 1:
+                    continue
+                if subset == "spoof" and label != 0:
+                    continue
+                self.samples.append((filename, label))
+
+        print(f"ATADD ({subset}): {len(self.samples)} samples from {root_dir}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        filename, label = self.samples[idx]
+        path = self.root_dir / filename
+        waveform = _load_audio(str(path), self.target_sample_rate, self.max_duration_seconds)
+        return waveform, label, Path(filename).stem
+
+
 def collate_fn(batch):
     """Pad waveforms to longest in batch.
 

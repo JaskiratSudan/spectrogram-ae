@@ -12,6 +12,7 @@ from config import Config
 from dataset import (
     ASVspoof2019Dataset,
     ASVspoof5Dataset,
+    ATADDDataset,
     FakeXposeDataset,
     FamousFiguresDataset,
     InTheWildDataset,
@@ -31,7 +32,7 @@ def parse_args():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument(
         "--dataset", required=True,
-        choices=["asv19", "itw", "fakexpose", "asv5", "mlaad", "famousfigures", "all"],
+        choices=["asv19", "itw", "fakexpose", "asv5", "mlaad", "famousfigures", "atadd", "all"],
     )
     parser.add_argument("--protocol", default=None)
     parser.add_argument("--root", default=None)
@@ -52,14 +53,14 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
 
 
 def _score_waveform(model, cfg, device, waveform: torch.Tensor):
-    """Compute (mel_np, error_np, score) for a single waveform tensor [T]."""
+    """Compute (mel_np, recon_np, error_np, score) for a single waveform tensor [T]."""
     mel = compute_mel(waveform.to(device), cfg)
     mask = compute_mask(mel, cfg)
     x_in = (mel * mask).unsqueeze(0).unsqueeze(0)
-    recon = model(x_in)[0]
-    error_map = (mel - recon.squeeze()).abs()
+    recon = model(x_in)[0].squeeze()
+    error_map = (mel - recon).abs()
     score = error_map.mean().item()
-    return mel.cpu().numpy(), error_map.cpu().numpy(), score
+    return mel.cpu().numpy(), recon.cpu().numpy(), error_map.cpu().numpy(), score
 
 
 def _build_name_to_idx(dataset, dataset_name: str):
@@ -123,7 +124,7 @@ def evaluate_single(model, cfg, device, dataset_name: str, dataset, results_dir:
 
     # Scalar records for ALL samples — used for EER, pair detection
     all_results: list[tuple[float, int, str]] = []
-    # Reservoir of (mel_np, err_np, audio_name, label) for individual sample plots
+    # Reservoir of (mel_np, recon_np, err_np, audio_name, label, score)
     reservoir: list = []
     RESERVOIR_SIZE = 10
 
@@ -135,17 +136,17 @@ def evaluate_single(model, cfg, device, dataset_name: str, dataset, results_dir:
             label = label_batch[0].item()
             audio_name = audio_names[0]
 
-            mel_np, err_np, score = _score_waveform(model, cfg, device, waveform)
+            mel_np, recon_np, err_np, score = _score_waveform(model, cfg, device, waveform)
             writer.writerow([audio_name, label, f"{score:.6f}"])
             all_results.append((score, label, audio_name))
 
             # Reservoir sampling
             if len(reservoir) < RESERVOIR_SIZE:
-                reservoir.append((mel_np, err_np, audio_name, label, score))
+                reservoir.append((mel_np, recon_np, err_np, audio_name, label, score))
             else:
                 j = random.randint(0, i)
                 if j < RESERVOIR_SIZE:
-                    reservoir[j] = (mel_np, err_np, audio_name, label, score)
+                    reservoir[j] = (mel_np, recon_np, err_np, audio_name, label, score)
 
     print(f"Scores saved to {csv_path}")
 
@@ -160,6 +161,7 @@ def evaluate_single(model, cfg, device, dataset_name: str, dataset, results_dir:
     eer, threshold = compute_eer(scores, labels)
     print(f"[{dataset_name}] EER={eer:.2f}%  AUROC={auroc:.2f}%  "
           f"threshold={threshold:.4f}  n={len(scores)}")
+    print()
 
     # Score distribution plot
     dist_path = os.path.join(results_dir, f"{dataset_name}_score_dist.png")
@@ -168,12 +170,12 @@ def evaluate_single(model, cfg, device, dataset_name: str, dataset, results_dir:
 
     # Individual sample plots with labels
     name_to_score = {name: score for score, _, name in all_results}
-    for mel_np, err_np, audio_name, label, score in reservoir:
+    for mel_np, recon_np, err_np, audio_name, label, score in reservoir:
         true_label = "bonafide" if label == 1 else "spoof"
         pred_label = "bonafide" if score < threshold else "spoof"
         safe = audio_name.replace("/", "_").replace(".", "_")
         png_path = os.path.join(results_dir, f"{dataset_name}_{safe}_error.png")
-        plot_error_map(mel_np, err_np, png_path, true_label=true_label, pred_label=pred_label)
+        plot_error_map(mel_np, recon_np, err_np, png_path, true_label=true_label, pred_label=pred_label)
 
     # Paired plots for applicable datasets
     if dataset_name in PAIRED_DATASETS:
@@ -211,11 +213,11 @@ def _make_paired_plot(model, cfg, device, dataset, dataset_name,
         r_wave, _, _ = dataset[r_idx]
         f_wave, _, _ = dataset[f_idx]
 
-        r_mel, r_err, r_score = _score_waveform(model, cfg, device, r_wave)
-        f_mel, f_err, f_score = _score_waveform(model, cfg, device, f_wave)
+        r_mel, r_recon, r_err, r_score = _score_waveform(model, cfg, device, r_wave)
+        f_mel, f_recon, f_err, f_score = _score_waveform(model, cfg, device, f_wave)
 
         label = _pair_label(real_name, fake_name, dataset_name)
-        plot_pairs.append((r_mel, r_err, r_score, f_mel, f_err, f_score, label))
+        plot_pairs.append((r_mel, r_recon, r_err, r_score, f_mel, f_recon, f_err, f_score, label))
 
     if plot_pairs:
         save_path = os.path.join(results_dir, f"{dataset_name}_paired_comparison.png")
@@ -237,6 +239,8 @@ def build_dataset(dataset_name: str, args, cfg: Config):
         return MLAADDataset(args.root, args.protocol, subset=args.subset, **kw)
     if dataset_name == "famousfigures":
         return FamousFiguresDataset(args.root, args.protocol, subset=args.subset, **kw)
+    if dataset_name == "atadd":
+        return ATADDDataset(args.root, args.protocol, subset=args.subset, **kw)
     raise ValueError(f"Unknown dataset: {dataset_name}")
 
 

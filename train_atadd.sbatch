@@ -25,7 +25,7 @@ cd ~/spectrogram_ae
 #----------------------------------------------------------------#
 #  EXPERIMENT SETTINGS — edit here
 #----------------------------------------------------------------#
-ENCODER=cnn               # cnn | vit_tiny
+ENCODER=cnn               # cnn | convnext | vit_tiny | vit_small
 MASK_TYPE=contour         # contour | energy
 CONTOUR_THRESHOLD=40
 ENERGY_THRESHOLD=40
@@ -44,6 +44,13 @@ ATADD_TRAIN_ROOT=${ATADD_ROOT}/train
 ATADD_TRAIN_PROTOCOL=${ATADD_ROOT}/label/train.csv
 ATADD_DEV_ROOT=${ATADD_ROOT}/dev
 ATADD_DEV_PROTOCOL=${ATADD_ROOT}/label/dev.csv
+
+# Set to 1 to add FamousFigures bonafide samples to training
+USE_FAMOUSFIGURES_TRAIN=0
+FAMOUSFIGURES_ROOT=
+FAMOUSFIGURES_PROTOCOL=/nfs/turbo/umd-hafiz/issf_server_data/famousfigures/protocol.txt
+# Set to a checkpoint path to resume training (leave empty to start fresh)
+RESUME_CKPT=""
 
 #----------------------------------------------------------------#
 #  LOG SYMLINK
@@ -77,6 +84,15 @@ TRAIN_ARGS=(
     --patience          15
     --batch_size        32
 )
+
+if [ "${USE_FAMOUSFIGURES_TRAIN}" = "1" ]; then
+    TRAIN_ARGS+=(--famousfigures_train_root "${FAMOUSFIGURES_ROOT}" \
+                 --famousfigures_train_protocol "${FAMOUSFIGURES_PROTOCOL}")
+fi
+
+if [ -n "${RESUME_CKPT}" ]; then
+    TRAIN_ARGS+=(--resume "${RESUME_CKPT}")
+fi
 
 python -u train.py "${TRAIN_ARGS[@]}"
 echo "Training complete at $(date)"

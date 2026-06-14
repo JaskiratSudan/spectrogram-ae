@@ -10,7 +10,10 @@ import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from config import Config
-from dataset import ASVspoof2019Dataset, ASVspoof5Dataset, ATADDDataset, MLAADDataset, collate_fn
+from dataset import (
+    ASVspoof2019Dataset, ASVspoof5Dataset, ATADDDataset,
+    FamousFiguresDataset, MLAADDataset, collate_fn,
+)
 from features import compute_mel, compute_mask
 from models import build_model
 from utils import set_seed
@@ -45,7 +48,8 @@ def parse_args():
     parser.add_argument("--train_root", required=True)
     parser.add_argument("--dev_protocol", default=None)
     parser.add_argument("--dev_root", default=None)
-    parser.add_argument("--encoder", default="cnn", choices=["cnn", "vit_tiny"])
+    parser.add_argument("--encoder", default="cnn",
+                        choices=["cnn", "convnext", "vit_tiny", "vit_small"])
     parser.add_argument("--train_dataset", default="asv19", choices=["asv19", "atadd"],
                         help="Dataset class to use for the primary train split")
     parser.add_argument("--dev_dataset", default="asv19", choices=["asv19", "atadd"],
@@ -58,6 +62,10 @@ def parse_args():
     parser.add_argument("--asv5_train_protocol", default=None)
     parser.add_argument("--mlaad_train_root", default=None)
     parser.add_argument("--mlaad_train_protocol", default=None)
+    parser.add_argument("--famousfigures_train_root", default=None)
+    parser.add_argument("--famousfigures_train_protocol", default=None)
+    parser.add_argument("--resume", default=None,
+                        help="Path to a checkpoint to resume training from")
 
     # Allow overriding any Config field
     cfg_fields = {f.name: f for f in fields(Config)}
@@ -178,6 +186,11 @@ def main():
         train_datasets.append(
             MLAADDataset(args.mlaad_train_root, args.mlaad_train_protocol, subset="bonafide", **kw)
         )
+    if args.famousfigures_train_root is not None and args.famousfigures_train_protocol:
+        train_datasets.append(
+            FamousFiguresDataset(args.famousfigures_train_root, args.famousfigures_train_protocol,
+                                 subset="bonafide", **kw)
+        )
 
     train_ds = ConcatDataset(train_datasets) if len(train_datasets) > 1 else train_datasets[0]
     total_train = sum(len(d) for d in train_datasets)
@@ -210,14 +223,39 @@ def main():
         pct_start=0.1,
     )
 
-    log_path = os.path.join(cfg.save_dir, "log.csv")
-    with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow(["epoch", "train_loss", "val_loss", "lr"])
-
+    start_epoch = 1
     best_val = float("inf")
     epochs_no_improve = 0
 
-    for epoch in range(1, cfg.epochs + 1):
+    if args.resume:
+        ckpt_resume = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt_resume["model"])
+        optimizer.load_state_dict(ckpt_resume["optimizer"])
+        if "scheduler" in ckpt_resume:
+            scheduler.load_state_dict(ckpt_resume["scheduler"])
+        else:
+            # Old checkpoint has no scheduler state — build a fresh scheduler
+            # for the remaining steps so the LR curve restarts cleanly.
+            resumed_epoch = ckpt_resume["epoch"]
+            remaining_steps = len(train_loader) * (cfg.epochs - resumed_epoch)
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=cfg.lr,
+                total_steps=max(remaining_steps, 1),
+                pct_start=0.1,
+            )
+        start_epoch = ckpt_resume["epoch"] + 1
+        best_val = ckpt_resume.get("best_val", float("inf"))
+        print(f"Resumed from {args.resume} — starting at epoch {start_epoch}, "
+              f"best_val so far={best_val:.5f}")
+
+    log_path = os.path.join(cfg.save_dir, "log.csv")
+    log_mode = "a" if args.resume and os.path.exists(log_path) else "w"
+    with open(log_path, log_mode, newline="") as f:
+        if log_mode == "w":
+            csv.writer(f).writerow(["epoch", "train_loss", "val_loss", "lr"])
+
+    for epoch in range(start_epoch, cfg.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, device, cfg)
         val_loss = validate(model, dev_loader, device, cfg)
         current_lr = scheduler.get_last_lr()[0]
@@ -230,12 +268,15 @@ def main():
         ckpt = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
             "epoch": epoch,
+            "best_val": best_val,
             "config": cfg,
         }
         if val_loss < best_val:
             best_val = val_loss
             epochs_no_improve = 0
+            ckpt["best_val"] = best_val
             torch.save(ckpt, os.path.join(cfg.save_dir, "best.pt"))
         else:
             epochs_no_improve += 1

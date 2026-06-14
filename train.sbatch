@@ -5,7 +5,7 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=10:00:00
+#SBATCH --time=50:00:00
 #SBATCH --output=logs/slurm-%j.log
 #SBATCH --mail-user=jsudan@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -27,14 +27,17 @@ echo "----------------------------------------------------------------"
 #----------------------------------------------------------------#
 #  EXPERIMENT CONFIG
 #----------------------------------------------------------------#
-ENCODER=cnn     # cnn | vit_tiny
+ENCODER=convnext     # cnn | convnext | vit_tiny | vit_small
 MASK_TYPE=contour    # contour | energy
-CONTOUR_THRESHOLD=50   # keep edges where norm magnitude > threshold/100
+CONTOUR_THRESHOLD=40   # keep edges where norm magnitude > threshold/100
 ENERGY_THRESHOLD=0     # keep cells within this many dB of the global max
-# Set to 1 to include ASV5/MLAAD bonafide samples in training
+# Set to 1 to include extra bonafide samples in training
 USE_ASV5_TRAIN=0
 USE_MLAAD_TRAIN=0
-EXP_NAME=spec_ae_${ENCODER}_${MASK_TYPE}_conth_${CONTOUR_THRESHOLD}_enth_${ENERGY_THRESHOLD}_asv5_${USE_ASV5_TRAIN}_mlaad_${USE_MLAAD_TRAIN}
+USE_FAMOUSFIGURES_TRAIN=1
+# Set to a checkpoint path to resume training (leave empty to start fresh)
+RESUME_CKPT="/scratch/hafiz_root/hafiz1/jsudan/spectrogram_ae/checkpoints/spec_ae_convnext_contour_conth_40_enth_0_asv5_0_mlaad_0_ff_1/best.pt"
+EXP_NAME=spec_ae_${ENCODER}_${MASK_TYPE}_conth_${CONTOUR_THRESHOLD}_enth_${ENERGY_THRESHOLD}_asv5_${USE_ASV5_TRAIN}_mlaad_${USE_MLAAD_TRAIN}_ff_${USE_FAMOUSFIGURES_TRAIN}
 EPOCHS=500
 PATIENCE=10
 RAWBOOST_PROB=0.7
@@ -111,6 +114,15 @@ fi
 
 if [ "${USE_MLAAD_TRAIN}" = "1" ]; then
   TRAIN_ARGS+=(--mlaad_train_root "${MLAAD_ROOT}" --mlaad_train_protocol "${MLAAD_PROTOCOL}")
+fi
+
+if [ "${USE_FAMOUSFIGURES_TRAIN}" = "1" ]; then
+  TRAIN_ARGS+=(--famousfigures_train_root "${FAMOUSFIGURES_ROOT}" \
+               --famousfigures_train_protocol "${FAMOUSFIGURES_PROTOCOL}")
+fi
+
+if [ -n "${RESUME_CKPT}" ]; then
+  TRAIN_ARGS+=(--resume "${RESUME_CKPT}")
 fi
 
 python train.py "${TRAIN_ARGS[@]}"

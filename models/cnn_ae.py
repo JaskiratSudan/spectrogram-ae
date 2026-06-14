@@ -56,6 +56,22 @@ class CNNAutoencoder(nn.Module):
             nn.ConvTranspose2d(32, 1, kernel_size=2, stride=2, bias=True),
         )
 
+    def _encode_blocks(self, x: torch.Tensor):
+        """Run encoder block-by-block, returning all 4 intermediate feature maps."""
+        f1 = self.encoder_conv[0](x)
+        f2 = self.encoder_conv[1](f1)
+        f3 = self.encoder_conv[2](f2)
+        f4 = self.encoder_conv[3](f3)
+        return f1, f2, f3, f4
+
+    def intermediate_features(self, x: torch.Tensor):
+        """Return (f1, f2, f3, f4) feature maps for feature-space scoring.
+
+        f1: [B, 32,  40, 250]  — finest, local texture
+        f4: [B, 256,  5,  31]  — coarsest, global structure
+        """
+        return self._encode_blocks(x)
+
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, 1, F, T] -> z: [B, latent_dim]"""
         h = self.encoder_conv(x)

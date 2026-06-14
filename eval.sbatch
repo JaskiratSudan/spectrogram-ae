@@ -5,8 +5,8 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=15:00:00
-#SBATCH --output=logs/slurm-%j.log
+#SBATCH --time=16:00:00
+#SBATCH --output=logs/%x-%j.log
 #SBATCH --mail-user=jsudan@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
 
@@ -30,10 +30,12 @@ RESULTS_BASE=/home/jsudan/spectrogram_ae/results
 #  (best.pt for cnn/vit_tiny contour are corrupted — using nearest epoch ckpt)
 #----------------------------------------------------------------#
 declare -A CKPTS
-CKPTS[spec_ae_cnn_contour]="${BASE}/checkpoints/spec_ae_cnn/epoch_80.pt"
-CKPTS[spec_ae_vit_tiny_contour]="${BASE}/checkpoints/spec_ae_vit_tiny/epoch_85.pt"
-CKPTS[spec_ae_cnn_energy]="${BASE}/checkpoints/spec_ae_cnn_energy_asv5_0_mlaad_0/best.pt"
-CKPTS[spec_ae_vit_tiny_energy]="${BASE}/checkpoints/spec_ae_vit_tiny_energy_asv5_0_mlaad_0/best.pt"
+# CKPTS[spec_ae_cnn_contour]="${BASE}/checkpoints/spec_ae_cnn/epoch_80.pt"
+# CKPTS[spec_ae_vit_tiny_contour]="${BASE}/checkpoints/spec_ae_vit_tiny/epoch_85.pt"
+# CKPTS[spec_ae_cnn_energy]="${BASE}/checkpoints/spec_ae_cnn_energy_asv5_0_mlaad_0/best.pt"
+CKPTS[spec_ae_cnn_contour_conth_40_enth_0_asv5_0_mlaad_0]="${BASE}/checkpoints/spec_ae_cnn_contour_conth_40_enth_0_asv5_0_mlaad_0/best.pt"
+CKPTS[spec_ae_cnn_contour_conth_40_enth_0_asv5_0_mlaad_0_ff_1]="${BASE}/checkpoints/spec_ae_cnn_contour_conth_40_enth_0_asv5_0_mlaad_0_ff_1/best.pt"
+
 
 #----------------------------------------------------------------#
 #  DATASET PATHS
@@ -55,6 +57,35 @@ FAKEXPOSE_ROOT=/nfs/turbo/umd-hafiz/issf_server_data/fakexpose
 FAMOUSFIGURES_ROOT=
 FAMOUSFIGURES_PROTOCOL=/nfs/turbo/umd-hafiz/issf_server_data/famousfigures/protocol.txt
 
+#  Set FORCE=1 to re-run datasets that already have a scores CSV
+FORCE=1
+
+#----------------------------------------------------------------#
+#  SCORING CONFIG
+#  score_type: pixel (default) | feature (CNN/ConvNeXt only)
+#  feature_weights: comma-separated per-block weights (finest→coarsest)
+#  normalize_features: 1 = normalize per-channel L2 before distance (recommended)
+#----------------------------------------------------------------#
+SCORE_TYPE=feature
+FEATURE_WEIGHTS="1.0,0.8,0.4,0.2"
+NORMALIZE_FEATURES=1
+
+#----------------------------------------------------------------#
+#  HELPER — skip datasets already evaluated (csv exists and non-empty)
+#----------------------------------------------------------------#
+_eval_dataset() {
+    local dataset=$1; shift
+    local csv="${RESULTS_DIR}/${dataset}_scores.csv"
+    if [ "${FORCE}" != "1" ] && [ -f "${csv}" ] && [ -s "${csv}" ]; then
+        echo "[SKIP] ${EXP_NAME}/${dataset}: already evaluated"
+        return
+    fi
+    local score_args=(--score_type "${SCORE_TYPE}" --feature_weights "${FEATURE_WEIGHTS}")
+    [ "${NORMALIZE_FEATURES}" != "1" ] && score_args+=(--no_normalize_features)
+    python evaluate.py --checkpoint "${CKPT}" --results_dir "${RESULTS_DIR}" \
+        --dataset "${dataset}" "${score_args[@]}" "$@"
+}
+
 #----------------------------------------------------------------#
 #  RUN EVALUATIONS
 #----------------------------------------------------------------#
@@ -66,18 +97,6 @@ for EXP_NAME in "${!CKPTS[@]}"; do
         echo "[SKIP] ${EXP_NAME}: checkpoint not found at ${CKPT}"
         continue
     fi
-
-    # Skip datasets already evaluated (csv exists and is non-empty)
-    _eval_dataset() {
-        local dataset=$1; shift
-        local csv="${RESULTS_DIR}/${dataset}_scores.csv"
-        if [ -f "${csv}" ] && [ -s "${csv}" ]; then
-            echo "[SKIP] ${EXP_NAME}/${dataset}: already evaluated"
-            return
-        fi
-        python evaluate.py --checkpoint "${CKPT}" --results_dir "${RESULTS_DIR}" \
-            --dataset "${dataset}" "$@"
-    }
 
     mkdir -p "${RESULTS_DIR}"
     echo "================================================================"

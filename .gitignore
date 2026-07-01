@@ -16,3 +16,7 @@ checkpoints/
 
 # notebook checkpoints
 .ipynb_checkpoints/
+
+# images
+*.png
+*.jpg
